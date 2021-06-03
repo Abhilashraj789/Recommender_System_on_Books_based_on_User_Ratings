@@ -1,0 +1,218 @@
+# SDM-2 Project
+# Recommender System on Books based on User Ratings
+# Abhilash Rajaram, Apurva Saha, Khushal Arora
+######################################################
+
+rm(list=ls())
+graphics.off()
+setwd("C:/Users/Abhilash Rajaram/Documents/UB/EAS_507/Project")
+
+#install.packages("bit64")
+#install.packages("recommenderlab")
+#install.packages("tidyr")
+#install.packages("dplyr")
+library(bit64)
+library(recommenderlab)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+### Loading the data
+set.seed(123)
+Books <- read.delim("Books.csv", sep = ",")
+Books <- Books[ , -c(6,7,8)]
+head(Books) 
+dim(Books)          #271360      5
+sum(is.na(Books))
+
+Users <- read.delim("Users.csv", sep = ",")
+head(Users) 
+dim(Users)
+sum(is.na(Users$Age))
+Users <- Users[ , -3]
+head(Users) 
+dim(Users)          #278858      2
+sum(is.na(Users))
+
+Ratings <- read.delim("Ratings.csv", sep = ",")
+head(Ratings) 
+dim(Ratings)        #1048575       3
+sum(is.na(Ratings))
+
+### Combining 3 datasets together
+dats_1 <- merge(Ratings, Books, by="ISBN")
+head(dats_1) 
+dim(dats_1)         #941112      7
+
+dats <- merge(dats_1, Users, by="User.ID")
+head(dats) 
+dim(dats)           #941112      8
+
+### Removing rating with value 0
+unique(dats$Book.Rating)
+x11()
+dats %>% 
+    ggplot(aes(x = Book.Rating, fill = factor(Book.Rating))) +
+    geom_bar(color = "grey20") + scale_fill_brewer(palette = "Spectral") +
+    guides(fill = FALSE) + ggtitle("Histogram of Ratings with 0")
+
+new_dats <- dats[dats$Book.Rating!= 0, ]
+head(new_dats) 
+dim(new_dats)       #351857      8
+
+unique(new_dats$Book.Rating)
+x11()
+new_dats %>% 
+    ggplot(aes(x = Book.Rating, fill = factor(Book.Rating))) +
+    geom_bar(color = "grey20") + scale_fill_brewer(palette = "Spectral") +
+    guides(fill = FALSE) + ggtitle("Histogram of Ratings without 0")
+
+### Number of distinct users and distinct books
+length(unique(new_dats$User.ID)) #61877 distinct users
+length(unique(new_dats$ISBN)) #141901 distinct books
+
+### Pre processing the data
+# Converting the rating format from 1-10 to 1-5
+new_dats$Book.Rating <- ceiling(new_dats$Book.Rating / 2)
+head(new_dats) 
+
+# Removing all non-numeric columns from variable ISBN
+new_dats$ISBN <- gsub("[^0-9.-]", "", new_dats$ISBN)
+new_dats$ISBN <- as.integer64(new_dats$ISBN)
+new_dats$User.ID <- as.integer64(new_dats$User.ID)
+sum(is.na(new_dats))
+sapply(new_dats, class)
+
+# Fetching users who have rated most number of times
+ratings_sum_1 = new_dats %>%
+    group_by(User.ID) %>%
+    count()
+ratings_sum_1
+user_index <- ratings_sum_1$User.ID[ratings_sum_1$n>40]
+
+# Plot of users with most ratings
+x11()
+plot(ratings_sum_1$User.ID, ratings_sum_1$n,
+     main = "Graph of Users with most ratings")
+
+# Information of user who has rated most number of times
+max(ratings_sum_1$n)
+ratings_sum_1$User.ID[ratings_sum_1$n == max(ratings_sum_1$n)]
+head(new_dats[new_dats$User.ID == 11676, ])
+
+# Fetching books which have been rated most number of times
+ratings_sum_2 = new_dats %>% 
+    group_by(ISBN) %>% 
+    summarize(number_of_ratings_per_book = n()) %>%
+    arrange( desc(number_of_ratings_per_book)) %>%
+    head
+ratings_sum_2
+
+# Information of book that has been rated most number of times
+max(ratings_sum_2$number_of_ratings_per_book)
+ratings_sum_2$ISBN[ratings_sum_2$number_of_ratings_per_book == max(ratings_sum_2$number_of_ratings_per_book)]
+head(new_dats[new_dats$ISBN == 316666343, ])
+
+### Creating a smaller dataset to ease the recommendation
+new_dats2 <-  new_dats[,c(1,2,3)]
+new_dats2 <- new_dats2[new_dats2$User.ID == user_index, ]
+head(new_dats2)
+dim(new_dats2)
+sum(is.na(new_dats2))
+sapply(new_dats2, class)
+
+### Creating a "realRatingMatrix"
+data_matrix <- as(new_dats2[1:10,], "realRatingMatrix")
+data_matrix
+
+### Fetching the Rating Matrix
+dim(getRatingMatrix(data_matrix))
+getRatingMatrix(data_matrix)[1:6, 1:10]
+
+### Creating Popularity recommender systems
+recommender_popularity <- Recommender(data_matrix, method = "POPULAR")
+getModel(recommender_popularity)
+names(getModel(recommender_popularity))
+getModel(recommender_popularity)$topN
+
+### Top 10 book recommendations for 5 users
+top_rec <- predict(recommender_popularity, data_matrix[1:5], n=10)
+top_rec
+as(top_rec, "list")
+
+head(Books[Books$ISBN == 394534433, c(1,2)])
+head(Books[Books$ISBN == 451208765, c(1,2)])
+head(Books[Books$ISBN == 590251678, c(1,2)])
+head(Books[Books$ISBN == 785281967, c(1,2)])
+head(Books[Books$ISBN == 8423986225, c(1,2)])
+
+### Creating User based recommender systems
+
+# Using Cosine dissimilarity measure and predicting the user ratings
+recommender_system_1 <- Recommender(data_matrix, method = "UBCF",  
+            parameter = list(nn = 30, normalize = "center",
+                             method = "cosine"))
+recommender_system_1
+
+predict_ratingmatrix_1 <- predict(recommender_system_1, data_matrix,
+                             type = "ratingMatrix", n=10)
+predict_ratingmatrix_1
+as(predict_ratingmatrix_1, "matrix")[,1:10]
+
+# Using Jaccard dissimilarity measure and predicting the user ratings
+recommender_system_2 <- Recommender(data_matrix, method = "UBCF",  
+                    parameter = list(nn = 30, normalize = "center",
+                                     method = "jaccard"))
+recommender_system_2
+
+predict_ratingmatrix_2 <- predict(recommender_system_2, data_matrix,
+                                  type = "ratingMatrix", n=10)
+predict_ratingmatrix_2
+as(predict_ratingmatrix_2, "matrix")[,1:10]
+
+### Creating Item based recommender sytems
+
+# Using Cosine dissimilarity measure and predicting the item ratings
+recommender_system_3 <- Recommender(data_matrix, method = "IBCF",  
+                                    parameter = list(k = 30, normalize = "center",
+                                                     method = "Cosine"))
+recommender_system_3
+
+predict_ratingmatrix_3 <- predict(recommender_system_3, data_matrix,
+                                  type = "ratingMatrix", n=10)
+predict_ratingmatrix_3
+as(predict_ratingmatrix_3, "matrix")[,1:10]
+
+# Using Jaccard dissimilarity measure and predicting the item ratings
+recommender_system_4 <- Recommender(data_matrix, method = "IBCF",  
+                                    parameter = list(k = 30, normalize = "center",
+                                                     method = "jaccard"))
+recommender_system_4
+
+predict_ratingmatrix_4 <- predict(recommender_system_4, data_matrix,
+                                  type = "ratingMatrix", n=10)
+predict_ratingmatrix_4
+as(predict_ratingmatrix_4, "matrix")[,1:10]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
